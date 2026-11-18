@@ -1,47 +1,49 @@
 #!/usr/bin/env python3
-"""Render a newspaper front page for Wednesday 18 November 2026 and
-save it to /output/entry.png.
+"""Wednesday 18 November 2026 — a one-page newspaper front page.
 
-The program is fully deterministic: no network access, no clock reads,
-no randomness, so two runs produce byte-identical PNG output.
+Drawn entirely with Pillow primitives: no templates, no image assets.
+Every run produces identical bytes: fixed fonts, fixed geometry, no
+randomness and nothing read from the clock or the environment.
 """
 
+import hashlib
 import os
 
 from PIL import Image, ImageDraw, ImageFont
 
-# Canvas size and palette
-WIDTH, HEIGHT = 1024, 1024
-PAPER = (250, 247, 240)      # warm off-white
-INK = (26, 26, 26)           # near-black text
-NAVY = (26, 42, 74)          # masthead and US politics tag
-RED = (163, 29, 29)          # date line, lead kicker, Middle East tag
-GREEN = (31, 111, 63)        # health tag
-BROWN = (146, 96, 26)        # space tag
-GREY = (90, 90, 90)          # summary and footer text
+PAGE_W, PAGE_H = 1024, 1024
+EDGE = 48                      # side margin
+SPAN = PAGE_W - 2 * EDGE       # text width for full-width blocks
 
-FONTS = "/usr/share/fonts/truetype/liberation"
-SERIF_BOLD = os.path.join(FONTS, "LiberationSerif-Bold.ttf")
-SERIF = os.path.join(FONTS, "LiberationSerif-Regular.ttf")
-SANS_BOLD = os.path.join(FONTS, "LiberationSans-Bold.ttf")
-SANS = os.path.join(FONTS, "LiberationSans-Regular.ttf")
+PAPER = (250, 247, 240)
+NAVY = (26, 42, 74)
+CRIMSON = (163, 29, 29)
+INK = (34, 34, 34)
+GREY = (96, 94, 88)
 
-MARGIN = 40
-TEXT_W = WIDTH - 2 * MARGIN
+SERIF_BOLD = "/usr/share/fonts/truetype/liberation/LiberationSerif-Bold.ttf"
+SERIF = "/usr/share/fonts/truetype/liberation/LiberationSerif-Regular.ttf"
+SANS_BOLD = "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf"
+SANS = "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf"
+
+_cache = {}
 
 
-def load(path, size):
-    return ImageFont.truetype(path, size)
+def face(path, size):
+    """Load (and memoise) a TrueType face at the requested size."""
+    key = (path, size)
+    if key not in _cache:
+        _cache[key] = ImageFont.truetype(path, size)
+    return _cache[key]
 
 
-def wrap_lines(draw, text, font, max_width):
-    """Break text into lines that fit inside max_width."""
+def fit(text, font, width):
+    """Greedy word wrap: split `text` into lines no wider than `width`."""
     words = text.split()
-    lines = []
-    current = ""
+    lines, current = [], ""
     for word in words:
-        trial = word if not current else current + " " + word
-        if draw.textlength(trial, font=font) <= max_width:
+        trial = f"{current} {word}".strip()
+        if font.getlength(trial) <= width:
             current = trial
         else:
             if current:
@@ -52,106 +54,168 @@ def wrap_lines(draw, text, font, max_width):
     return lines
 
 
-def centred(draw, y, text, font, fill):
-    """Draw one line centred on the page; return the font height."""
-    draw.text((WIDTH // 2, y), text, font=font, fill=fill, anchor="ma")
-    return font.size
-
-
-def paragraph(draw, x, y, text, font, fill, max_width, leading):
-    """Draw wrapped text from (x, y); return the y below the last line."""
-    for line in wrap_lines(draw, text, font, max_width):
-        draw.text((x, y), line, font=font, fill=fill)
-        y += leading
+def lines_down(pen, x, y, lines, font, colour, step):
+    """Paint `lines` top-down starting at (x, y); return the y below them."""
+    for line in lines:
+        pen.text((x, y), line, font=font, fill=colour)
+        y += step
     return y
 
 
-def main():
-    img = Image.new("RGB", (WIDTH, HEIGHT), PAPER)
-    draw = ImageDraw.Draw(img)
+def centred(pen, y, text, font, colour):
+    """Paint one centred line at height y; return the y just below it."""
+    x = (PAGE_W - font.getlength(text)) / 2
+    pen.text((x, y), text, font=font, fill=colour)
+    return y + int(font.size * 1.2)
 
-    # ---- Masthead ----
-    draw.line([(MARGIN, 26), (WIDTH - MARGIN, 26)], fill=INK, width=2)
-    masthead_font = load(SERIF_BOLD, 92)
-    centred(draw, 34, "WORLD NEWS", masthead_font, NAVY)
-    date_font = load(SERIF, 34)
-    centred(draw, 138, "Wednesday, 18 November 2026", date_font, RED)
-    draw.line([(MARGIN, 188), (WIDTH - MARGIN, 188)], fill=INK, width=5)
 
-    # ---- Lead story ----
-    y = 210
-    tag_font = load(SANS_BOLD, 19)
-    draw.text((MARGIN, y), "ASIA", font=tag_font, fill=RED)
-    y += 30
-    lead_head_font = load(SERIF_BOLD, 52)
-    y = paragraph(draw, MARGIN, y, "Trump lands in China as Xi and Putin meet",
-                  lead_head_font, INK, TEXT_W, 60)
+def rule(pen, y, weight, colour=NAVY):
+    """A horizontal rule across the content span; return the y below it."""
+    pen.rectangle([EDGE, y, PAGE_W - EDGE, y + weight - 1], fill=colour)
+    return y + weight
+
+
+# --- the day's stories -------------------------------------------------------
+
+LEAD = {
+    "tag": "ASIA",
+    "tag_colour": CRIMSON,
+    "headline": "Trump lands in China as Xi and Putin meet",
+    "summary": (
+        "Xi greets Trump at Shenzhen airport as a trilateral summit opens "
+        "alongside APEC, with trade and security topping the agenda."
+    ),
+}
+
+GRID = [
+    {
+        "tag": "US POLITICS",
+        "tag_colour": NAVY,
+        "headline": "Peltola wins Alaska, Democrats take Senate",
+        "summary": (
+            "Peltola's win gives Democrats a 56\u201344 Senate majority, "
+            "the largest since 2009."
+        ),
+    },
+    {
+        "tag": "MIDDLE EAST",
+        "tag_colour": (138, 90, 0),
+        "headline": "Iran fires drones at Bahrain and Kuwait",
+        "summary": (
+            "Iran launches drones at Bahrain and Kuwait in answer to the "
+            "US strike on Qeshm Island."
+        ),
+    },
+    {
+        "tag": "HEALTH",
+        "tag_colour": (30, 107, 52),
+        "headline": "Congo Ebola outbreak passes 11,000 cases",
+        "summary": (
+            "The Congo outbreak passes 11,000 cases with 5,400 dead, the "
+            "second-largest on record."
+        ),
+    },
+    {
+        "tag": "SPACE",
+        "tag_colour": (74, 42, 107),
+        "headline": "Voyager 1 reaches one light-day from Earth",
+        "summary": (
+            "Voyager 1 reaches one light-day out at 5:16 a.m. ET, 16 "
+            "billion miles from home."
+        ),
+    },
+    {
+        "tag": "DISASTER",
+        "tag_colour": (122, 31, 31),
+        "headline": "Russian military plane crashes in Siberia",
+        "summary": (
+            "A Russian military plane crashes in Siberia, killing all 19 "
+            "on board in Kemerovo."
+        ),
+    },
+    {
+        "tag": "MIDDLE EAST",
+        "tag_colour": (138, 90, 0),
+        "headline": "Gaza: cold kills in displaced tents",
+        "summary": (
+            "Cold weather is killing people in displaced families' tents "
+            "in Gaza as winter sets in."
+        ),
+    },
+]
+
+
+def story_card(pen, x, y, width, story):
+    """Paint one grid card (tag, headline, summary) at (x, y)."""
+    tag_face = face(SANS_BOLD, 18)
+    head_face = face(SERIF_BOLD, 28)
+    body_face = face(SERIF, 20)
+
+    pen.text((x, y), story["tag"], font=tag_face, fill=story["tag_colour"])
+    y += 26
+    head_lines = fit(story["headline"], head_face, width)
+    y = lines_down(pen, x, y, head_lines, head_face, INK, 34)
     y += 6
-    lead_sum_font = load(SANS, 24)
-    y = paragraph(draw, MARGIN, y,
-                  "Xi greets Trump at Shenzhen airport; the three leaders "
-                  "prepare a rare trilateral summit as APEC opens.",
-                  lead_sum_font, INK, TEXT_W, 31)
+    body_lines = fit(story["summary"], body_face, width)
+    y = lines_down(pen, x, y, body_lines, body_face, INK, 25)
+    return y
 
-    # ---- Story grid: two columns, three rows ----
-    cards = [
-        ("US POLITICS", NAVY,
-         "Peltola wins Alaska, Democrats take Senate",
-         "Democrats reach a 56-44 majority, their largest since 2009, "
-         "after a ninth midterm flip."),
-        ("MIDDLE EAST", RED,
-         "Iran fires drones at Bahrain and Kuwait",
-         "Tehran answers the US strike on Qeshm Island with drone attacks "
-         "on Gulf radar sites."),
-        ("HEALTH", GREEN,
-         "Congo Ebola outbreak passes 11,000 cases",
-         "Cases more than doubled in three months; 5,400 dead, the "
-         "second-largest on record."),
-        ("SPACE", BROWN,
-         "Voyager 1 reaches one light-day from Earth",
-         "At 5:16 a.m. ET it crossed 16 billion miles — farther than any "
-         "human-made object."),
-        ("DISASTER", INK,
-         "Russian military plane crashes in Siberia",
-         "All 19 on board were killed in the Kemerovo region crash, "
-         "officials say."),
-        ("MIDDLE EAST", RED,
-         "Gaza: cold kills in displaced tents",
-         "Winter cold threatens camps as aid stays short; families shelter "
-         "in flimsy tents."),
-    ]
 
-    col_w = (TEXT_W - 28) // 2
-    card_h = 160
-    grid_top = 448
-    row_gap = 14
-    card_tag_font = load(SANS_BOLD, 18)
-    card_head_font = load(SERIF_BOLD, 30)
-    card_sum_font = load(SANS, 20)
+def front_page():
+    """Compose the whole front page and return the Pillow image."""
+    sheet = Image.new("RGB", (PAGE_W, PAGE_H), PAPER)
+    pen = ImageDraw.Draw(sheet)
 
-    for i, (tag, colour, headline, summary) in enumerate(cards):
-        col = i % 2
-        row = i // 2
-        x = MARGIN + col * (col_w + 28)
-        top = grid_top + row * (card_h + row_gap)
-        draw.line([(x, top), (x + col_w, top)], fill=INK, width=2)
-        cy = top + 10
-        draw.text((x, cy), tag, font=card_tag_font, fill=colour)
-        cy += 28
-        cy = paragraph(draw, x, cy, headline, card_head_font, INK, col_w, 36)
-        cy += 4
-        paragraph(draw, x, cy, summary, card_sum_font, GREY, col_w, 25)
+    y = 30
+    # Masthead.
+    y = centred(pen, y, "WORLD NEWS", face(SERIF_BOLD, 92), NAVY)
+    y += 4
+    # Date line.
+    y = centred(
+        pen, y, "Wednesday, 18 November 2026", face(SERIF_BOLD, 34), CRIMSON
+    )
+    y += 14
+    y = rule(pen, y, 4)
+    y += 16
 
-    # ---- Footer ----
-    foot_y = grid_top + 3 * card_h + 2 * row_gap + 12
-    draw.line([(MARGIN, foot_y), (WIDTH - MARGIN, foot_y)], fill=INK, width=2)
-    foot_font = load(SANS, 19)
-    centred(draw, foot_y + 10,
-            "Wednesday, 18 November 2026  ·  Sources: Reuters, AP, AFP",
-            foot_font, GREY)
+    # Lead story.
+    pen.text((EDGE, y), LEAD["tag"], font=face(SANS_BOLD, 21),
+             fill=LEAD["tag_colour"])
+    y += 30
+    lead_head = fit(LEAD["headline"], face(SERIF_BOLD, 48), SPAN)
+    y = lines_down(pen, EDGE, y, lead_head, face(SERIF_BOLD, 48), INK, 56)
+    y += 8
+    lead_body = fit(LEAD["summary"], face(SERIF, 25), SPAN)
+    y = lines_down(pen, EDGE, y, lead_body, face(SERIF, 25), INK, 32)
+    y += 14
+    y = rule(pen, y, 2, NAVY)
+    y += 16
 
+    # 2 x 3 grid of story cards.
+    col_w = (SPAN - 32) // 2
+    row_h = 175
+    for idx, story in enumerate(GRID):
+        col, row = idx % 2, idx // 2
+        cx = EDGE + col * (col_w + 32)
+        cy = y + row * (row_h + 16)
+        story_card(pen, cx, cy, col_w, story)
+
+    # Footer.
+    foot = "Wednesday, 18 November 2026 \u00b7 Sources: Reuters, AP, AFP"
+    centred(pen, PAGE_H - 40, foot, face(SANS, 18), GREY)
+    return sheet
+
+
+def main():
     os.makedirs("/output", exist_ok=True)
-    img.save("/output/entry.png", format="PNG")
+    image = front_page()
+    path = "/output/entry.png"
+    image.save(path, format="PNG")
+    with open(path, "rb") as handle:
+        digest = hashlib.sha256(handle.read()).hexdigest()
+    size = os.path.getsize(path)
+    print(f"wrote {path}: {image.size[0]}x{image.size[1]}, "
+          f"{size} bytes, sha256 {digest}")
 
 
 if __name__ == "__main__":
