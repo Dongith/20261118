@@ -1,46 +1,47 @@
 #!/usr/bin/env python3
-"""Draw a newspaper front page summing up Wednesday 18 November 2026
-world news, and write it to /output/entry.png.
+"""Render a newspaper front page for Wednesday 18 November 2026 and
+save it to /output/entry.png.
 
-Deterministic: no network, no clock, no randomness. Running it twice
-produces byte-identical output.
+The program is fully deterministic: no network access, no clock reads,
+no randomness, so two runs produce byte-identical PNG output.
 """
 
 import os
+
 from PIL import Image, ImageDraw, ImageFont
 
-# Canvas
-W, H = 1024, 1024
+# Canvas size and palette
+WIDTH, HEIGHT = 1024, 1024
 PAPER = (250, 247, 240)      # warm off-white
 INK = (26, 26, 26)           # near-black text
-NAVY = (26, 42, 74)          # masthead
-RED = (163, 29, 29)          # date / lead kicker
+NAVY = (26, 42, 74)          # masthead and US politics tag
+RED = (163, 29, 29)          # date line, lead kicker, Middle East tag
 GREEN = (31, 111, 63)        # health tag
 BROWN = (146, 96, 26)        # space tag
-GREY = (90, 90, 90)          # summary text
+GREY = (90, 90, 90)          # summary and footer text
 
-FONT_DIR = "/usr/share/fonts/truetype/liberation"
-SERIF_B = os.path.join(FONT_DIR, "LiberationSerif-Bold.ttf")
-SERIF_R = os.path.join(FONT_DIR, "LiberationSerif-Regular.ttf")
-SANS_B = os.path.join(FONT_DIR, "LiberationSans-Bold.ttf")
-SANS_R = os.path.join(FONT_DIR, "LiberationSans-Regular.ttf")
+FONTS = "/usr/share/fonts/truetype/liberation"
+SERIF_BOLD = os.path.join(FONTS, "LiberationSerif-Bold.ttf")
+SERIF = os.path.join(FONTS, "LiberationSerif-Regular.ttf")
+SANS_BOLD = os.path.join(FONTS, "LiberationSans-Bold.ttf")
+SANS = os.path.join(FONTS, "LiberationSans-Regular.ttf")
 
 MARGIN = 40
-CONTENT_W = W - 2 * MARGIN
+TEXT_W = WIDTH - 2 * MARGIN
 
 
-def font(path, size):
+def load(path, size):
     return ImageFont.truetype(path, size)
 
 
-def wrap(draw, text, fnt, max_width):
-    """Split text into lines that fit max_width, measured with the font."""
+def wrap_lines(draw, text, font, max_width):
+    """Break text into lines that fit inside max_width."""
     words = text.split()
     lines = []
     current = ""
     for word in words:
         trial = word if not current else current + " " + word
-        if draw.textlength(trial, font=fnt) <= max_width:
+        if draw.textlength(trial, font=font) <= max_width:
             current = trial
         else:
             if current:
@@ -51,49 +52,48 @@ def wrap(draw, text, fnt, max_width):
     return lines
 
 
-def draw_centered(draw, y, text, fnt, fill):
-    """Draw text centred horizontally; return its height."""
-    draw.text((W // 2, y), text, font=fnt, fill=fill, anchor="ma")
-    return fnt.size
+def centred(draw, y, text, font, fill):
+    """Draw one line centred on the page; return the font height."""
+    draw.text((WIDTH // 2, y), text, font=font, fill=fill, anchor="ma")
+    return font.size
 
 
-def draw_block(draw, x, y, text, fnt, fill, max_width, line_height):
-    """Draw wrapped text starting at (x, y); return y after the last line."""
-    for line in wrap(draw, text, fnt, max_width):
-        draw.text((x, y), line, font=fnt, fill=fill)
-        y += line_height
+def paragraph(draw, x, y, text, font, fill, max_width, leading):
+    """Draw wrapped text from (x, y); return the y below the last line."""
+    for line in wrap_lines(draw, text, font, max_width):
+        draw.text((x, y), line, font=font, fill=fill)
+        y += leading
     return y
 
 
 def main():
-    img = Image.new("RGB", (W, H), PAPER)
-    d = ImageDraw.Draw(img)
+    img = Image.new("RGB", (WIDTH, HEIGHT), PAPER)
+    draw = ImageDraw.Draw(img)
 
-    # ---- Masthead -------------------------------------------------
-    d.line([(MARGIN, 26), (W - MARGIN, 26)], fill=INK, width=2)
-    masthead = font(SERIF_B, 92)
-    draw_centered(d, 34, "WORLD NEWS", masthead, NAVY)
-    date_font = font(SERIF_R, 34)
-    draw_centered(d, 138, "Wednesday, 18 November 2026", date_font, RED)
-    d.line([(MARGIN, 188), (W - MARGIN, 188)], fill=INK, width=5)
+    # ---- Masthead ----
+    draw.line([(MARGIN, 26), (WIDTH - MARGIN, 26)], fill=INK, width=2)
+    masthead_font = load(SERIF_BOLD, 92)
+    centred(draw, 34, "WORLD NEWS", masthead_font, NAVY)
+    date_font = load(SERIF, 34)
+    centred(draw, 138, "Wednesday, 18 November 2026", date_font, RED)
+    draw.line([(MARGIN, 188), (WIDTH - MARGIN, 188)], fill=INK, width=5)
 
-    # ---- Lead story -----------------------------------------------
-    lead_x = MARGIN
+    # ---- Lead story ----
     y = 210
-    tag_font = font(SANS_B, 19)
-    d.text((lead_x, y), "ASIA", font=tag_font, fill=RED)
+    tag_font = load(SANS_BOLD, 19)
+    draw.text((MARGIN, y), "ASIA", font=tag_font, fill=RED)
     y += 30
-    head_font = font(SERIF_B, 52)
-    y = draw_block(d, lead_x, y, "Trump lands in China as Xi and Putin meet",
-                   head_font, INK, CONTENT_W, 60)
+    lead_head_font = load(SERIF_BOLD, 52)
+    y = paragraph(draw, MARGIN, y, "Trump lands in China as Xi and Putin meet",
+                  lead_head_font, INK, TEXT_W, 60)
     y += 6
-    sum_font = font(SANS_R, 24)
-    y = draw_block(d, lead_x, y,
-                   "Xi greets Trump at Shenzhen airport; the three leaders "
-                   "prepare a rare trilateral summit as APEC opens.",
-                   sum_font, INK, CONTENT_W, 31)
+    lead_sum_font = load(SANS, 24)
+    y = paragraph(draw, MARGIN, y,
+                  "Xi greets Trump at Shenzhen airport; the three leaders "
+                  "prepare a rare trilateral summit as APEC opens.",
+                  lead_sum_font, INK, TEXT_W, 31)
 
-    # ---- Story grid: 2 columns x 3 rows ---------------------------
+    # ---- Story grid: two columns, three rows ----
     cards = [
         ("US POLITICS", NAVY,
          "Peltola wins Alaska, Democrats take Senate",
@@ -106,14 +106,14 @@ def main():
         ("HEALTH", GREEN,
          "Congo Ebola outbreak passes 11,000 cases",
          "Cases more than doubled in three months; 5,400 dead, the "
-         "second-largest outbreak on record."),
+         "second-largest on record."),
         ("SPACE", BROWN,
          "Voyager 1 reaches one light-day from Earth",
-         "At 5:16 a.m. ET it crossed 16 billion miles, a distance no "
-         "human-made object has reached."),
+         "At 5:16 a.m. ET it crossed 16 billion miles — farther than any "
+         "human-made object."),
         ("DISASTER", INK,
          "Russian military plane crashes in Siberia",
-         "All 19 people on board killed in the crash in Kemerovo region, "
+         "All 19 on board were killed in the Kemerovo region crash, "
          "officials say."),
         ("MIDDLE EAST", RED,
          "Gaza: cold kills in displaced tents",
@@ -121,34 +121,34 @@ def main():
          "in flimsy tents."),
     ]
 
-    col_w = (CONTENT_W - 28) // 2
-    card_h = 168
+    col_w = (TEXT_W - 28) // 2
+    card_h = 160
     grid_top = 448
     row_gap = 14
-    card_tag = font(SANS_B, 18)
-    card_head = font(SERIF_B, 30)
-    card_sum = font(SANS_R, 20)
+    card_tag_font = load(SANS_BOLD, 18)
+    card_head_font = load(SERIF_BOLD, 30)
+    card_sum_font = load(SANS, 20)
 
     for i, (tag, colour, headline, summary) in enumerate(cards):
         col = i % 2
         row = i // 2
         x = MARGIN + col * (col_w + 28)
         top = grid_top + row * (card_h + row_gap)
-        d.line([(x, top), (x + col_w, top)], fill=INK, width=2)
+        draw.line([(x, top), (x + col_w, top)], fill=INK, width=2)
         cy = top + 10
-        d.text((x, cy), tag, font=card_tag, fill=colour)
+        draw.text((x, cy), tag, font=card_tag_font, fill=colour)
         cy += 28
-        cy = draw_block(d, x, cy, headline, card_head, INK, col_w, 36)
+        cy = paragraph(draw, x, cy, headline, card_head_font, INK, col_w, 36)
         cy += 4
-        draw_block(d, x, cy, summary, card_sum, GREY, col_w, 25)
+        paragraph(draw, x, cy, summary, card_sum_font, GREY, col_w, 25)
 
-    # ---- Footer ----------------------------------------------------
+    # ---- Footer ----
     foot_y = grid_top + 3 * card_h + 2 * row_gap + 12
-    d.line([(MARGIN, foot_y), (W - MARGIN, foot_y)], fill=INK, width=2)
-    foot_font = font(SANS_R, 19)
-    draw_centered(d, foot_y + 10,
-                  "Wednesday, 18 November 2026  ·  Sources: Reuters, AP, AFP",
-                  foot_font, GREY)
+    draw.line([(MARGIN, foot_y), (WIDTH - MARGIN, foot_y)], fill=INK, width=2)
+    foot_font = load(SANS, 19)
+    centred(draw, foot_y + 10,
+            "Wednesday, 18 November 2026  ·  Sources: Reuters, AP, AFP",
+            foot_font, GREY)
 
     os.makedirs("/output", exist_ok=True)
     img.save("/output/entry.png", format="PNG")
